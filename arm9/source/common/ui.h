@@ -70,6 +70,10 @@ void PRINTF_ARGS(4) DrawStringCenter(u16 *screen, u32 color, u32 bgcolor, const 
 
 u32 GetCharSize(const char* str);
 u32 GetPrevCharSize(const char* str);
+const char* GetNextChar(const char* chr);
+const char* GetPrevChar(const char* chr);
+void IncChar(const char** chr);
+void DecChar(const char** chr);
 
 u32 GetDrawStringHeight(const char* str);
 u32 GetDrawStringWidth(const char* str);

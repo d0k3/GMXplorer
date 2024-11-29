@@ -312,7 +312,7 @@ verify S:/firm1.bin
 # applybpm 0:/example/patch.bpm 0:/data/originalfolder 0:/game/moddedfolder
 
 # 'textview' COMMAND
-# This will show a text file on screen, in a dedicated text viewer. Size restrictions apply (max 1MiB)
+# This will show a text file on screen, in a dedicated text editor. Size restrictions apply (max 1MiB)
 # textview 0:/sometext.txt
 
 # 'boot' COMMAND

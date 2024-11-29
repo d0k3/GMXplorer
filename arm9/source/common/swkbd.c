@@ -3,7 +3,6 @@
 #include "language.h"
 #include "swkbd.h"
 #include "timer.h"
-#include "hid.h"
 #include "utf.h"
 
 
@@ -12,7 +11,7 @@ static inline char to_uppercase(char c) {
     return c;
 }
 
-static bool BuildKeyboard(TouchBox* swkbd, const char* keys, const u8* layout) {
+bool BuildKeyboard(TouchBox* swkbd, const char* keys, const u8* layout, bool multi_line) {
     // count # of rows
     u32 n_rows = 0;
     for (u32 i = 0;; i++) {
@@ -26,16 +25,18 @@ static bool BuildKeyboard(TouchBox* swkbd, const char* keys, const u8* layout) {
     u32 height = (n_rows) ? (n_rows * SWKBD_STDKEY_HEIGHT) + ((n_rows-1) * SWKDB_KEY_SPACING) : 0;
     u32 p_y = SCREEN_HEIGHT - height - SWKBD_STDKEY_HEIGHT - SWKDB_KEY_SPACING;
 
-    // set up the textbox
-    TouchBox* txtbox = swkbd;
-    txtbox->x = (SCREEN_WIDTH_BOT - SWKBD_TEXTBOX_WIDTH) / 2;
-    txtbox->y = p_y - 30;
-    txtbox->w = SWKBD_TEXTBOX_WIDTH;
-    txtbox->h = 30;
-    txtbox->id = KEY_TXTBOX;
-
     // set button positions
-    TouchBox* tb = swkbd + 1;
+    TouchBox* tb = swkbd;
+    if (!multi_line) {
+        // set up the textbox
+        TouchBox* txtbox = tb++;
+        txtbox->x = (SCREEN_WIDTH_BOT - SWKBD_TEXTBOX_WIDTH) / 2;
+        txtbox->y = p_y - 30;
+        txtbox->w = SWKBD_TEXTBOX_WIDTH;
+        txtbox->h = 30;
+        txtbox->id = KEY_TXTBOX;
+    }
+
     for (u32 l = 0, k = 0; layout[l] != 0; ) {
         // calculate width of current row
         u32 n_keys = layout[l++];
@@ -70,8 +71,9 @@ static bool BuildKeyboard(TouchBox* swkbd, const char* keys, const u8* layout) {
     return true;
 }
 
-static void DrawKey(const TouchBox* key, const bool pressed, const u32 uppercase) {
+static void DrawKey(const TouchBox* key, const bool pressed, const u32 uppercase, const bool multi_line) {
     const char* keystrs[] = { SWKBD_KEYSTR };
+    const char* ml_keystrs[] = { SWKBD_ML_KEYSTR };
     const u32 color = (pressed) ? COLOR_SWKBD_PRESSED :
         (key->id == KEY_ENTER) ? COLOR_SWKBD_ENTER :
         ((key->id == KEY_CAPS) && (uppercase > 1)) ? COLOR_SWKBD_CAPS :
@@ -81,7 +83,7 @@ static void DrawKey(const TouchBox* key, const bool pressed, const u32 uppercase
     if (key->id == KEY_TXTBOX) return;
 
     char keystr[16];
-    if (key->id >= 0x80) snprintf(keystr, sizeof(keystr), "%s", keystrs[key->id - 0x80]);
+    if (key->id >= 0x80) snprintf(keystr, sizeof(keystr), "%s", (multi_line ? ml_keystrs : keystrs)[key->id - 0x80]);
     else {
         keystr[0] = (uppercase) ? to_uppercase(key->id) : key->id;
         keystr[1] = 0;
@@ -111,12 +113,12 @@ static void DrawKeyBoardBox(TouchBox* swkbd, u32 color) {
     DrawRectangle(BOT_SCREEN, x0-1, y0-1, x1-x0+2, y1-y0+2, color);
 }
 
-static void DrawKeyBoard(TouchBox* swkbd, const u32 uppercase) {
+static void DrawKeyBoard(TouchBox* swkbd, const u32 uppercase, const bool multi_line) {
     // we need to make sure to skip the textbox here(first entry)
 
     // draw keyboard
-    for (TouchBox* tb = swkbd + 1; tb->id != 0; tb++) {
-        DrawKey(tb, false, uppercase);
+    for (TouchBox* tb = swkbd + (multi_line ? 0 : 1); tb->id != 0; tb++) {
+        DrawKey(tb, false, uppercase, multi_line);
     }
 }
 
@@ -209,21 +211,24 @@ static void MoveTextBoxCursor(const TouchBox* txtbox, const char* inputstr, cons
     }
 }
 
-static char KeyboardWait(TouchBox* swkbd, bool uppercase) {
+static char KeyboardWait(TouchBox* swkbd, bool uppercase, const bool multi_line) {
     u32 id = 0;
     u16 x, y;
 
     // wait for touch input (handle key input, too)
     while (true) {
         u32 pressed = InputWait(0);
-        if (pressed & BUTTON_B) return KEY_ESCAPE;
+        if (multi_line && pressed & TIMEOUT_HID) return 0;
+        else if (pressed & BUTTON_B) return KEY_ESCAPE;
         else if (pressed & BUTTON_A) return KEY_ENTER;
         else if (pressed & BUTTON_X) return KEY_BKSPC;
-        else if (pressed & BUTTON_Y) return KEY_INSERT;
-        else if (pressed & BUTTON_R1) return KEY_CAPS;
+        else if (pressed & BUTTON_Y) return multi_line ? KEY_CLIP : KEY_INSERT;
+        else if (!multi_line && pressed & BUTTON_R1) return KEY_CAPS;
         else if (pressed & BUTTON_RIGHT) return KEY_RIGHT;
         else if (pressed & BUTTON_LEFT) return KEY_LEFT;
-        else if (pressed & BUTTON_SELECT) return KEY_SWITCH;
+        else if (multi_line && pressed & BUTTON_UP) return KEY_UP;
+        else if (multi_line && pressed & BUTTON_DOWN) return KEY_DOWN;
+        else if (!multi_line && pressed & BUTTON_SELECT) return KEY_SWITCH;
         else if (pressed & BUTTON_TOUCH) break;
     }
 
@@ -232,9 +237,9 @@ static char KeyboardWait(TouchBox* swkbd, bool uppercase) {
         const TouchBox* tb = TouchBoxGet(&id, x, y, swkbd, 0);
         if (tb) {
             if (id == KEY_TXTBOX) break; // immediately break on textbox
-            DrawKey(tb, true, uppercase);
+            DrawKey(tb, true, uppercase, multi_line);
             while(HID_ReadTouchState(&x, &y) && (tb == TouchBoxGet(NULL, x, y, swkbd, 0)));
-            DrawKey(tb, false, uppercase);
+            DrawKey(tb, false, uppercase, multi_line);
         }
     }
 
@@ -261,9 +266,9 @@ bool ShowKeyboard(char* inputstr, const u32 max_size, const char *format, ...) {
     }
 
     // generate keyboards
-    if (!BuildKeyboard(swkbd_alphabet, keys_alphabet, layout_alphabet)) return false;
-    if (!BuildKeyboard(swkbd_special, keys_special, layout_special)) return false;
-    if (!BuildKeyboard(swkbd_numpad, keys_numpad, layout_numpad)) return false;
+    if (!BuildKeyboard(swkbd_alphabet, keys_alphabet, layout_alphabet, false)) return false;
+    if (!BuildKeyboard(swkbd_special, keys_special, layout_special, false)) return false;
+    if (!BuildKeyboard(swkbd_numpad, keys_numpad, layout_numpad, false)) return false;
 
     // (instructional) text
     char str[512]; // arbitrary limit, should be more than enough
@@ -292,19 +297,19 @@ bool ShowKeyboard(char* inputstr, const u32 max_size, const char *format, ...) {
         // draw keyboard if required
         if (swkbd != swkbd_prev) {
             DrawKeyBoardBox(swkbd, COLOR_SWKBD_BOX);
-            DrawKeyBoard(swkbd, uppercase);
+            DrawKeyBoard(swkbd, uppercase, false);
             DrawTextBox(textbox, inputstr, cursor, &scroll);
             swkbd_prev = swkbd;
         }
 
         // handle user input
-        char key = KeyboardWait(swkbd, uppercase);
+        char key = KeyboardWait(swkbd, uppercase, false);
         if (key == KEY_INSERT) key = ' '; // impromptu replacement
         if (key == KEY_TXTBOX) {
             MoveTextBoxCursor(textbox, inputstr, max_size, &cursor, &scroll);
         } else if (key == KEY_CAPS) {
             uppercase = (uppercase + 1) % 3;
-            DrawKeyBoard(swkbd, uppercase);
+            DrawKeyBoard(swkbd, uppercase, false);
             continue;
         } else if (key == KEY_ENTER) {
             ret = true;
@@ -375,7 +380,7 @@ bool ShowKeyboard(char* inputstr, const u32 max_size, const char *format, ...) {
             }
             if (uppercase == 1) {
                 uppercase = 0;
-                DrawKeyBoard(swkbd, uppercase);
+                DrawKeyBoard(swkbd, uppercase, false);
             }
         }
 
@@ -385,4 +390,38 @@ bool ShowKeyboard(char* inputstr, const u32 max_size, const char *format, ...) {
 
     ClearScreen(BOT_SCREEN, COLOR_STD_BG);
     return ret;
+}
+
+char ShowMultiLineKeyboard(const char* instructions, TouchBox* swkbd_alphabet, TouchBox* swkbd_special, TouchBox* swkbd_numpad, TouchBox** swkbd, TouchBox** swkbd_prev, u32* uppercase) {
+    if (instructions) {
+        u32 str_width = GetDrawStringWidth(instructions);
+        if (str_width < (24 * FONT_WIDTH_EXT)) str_width = 24 * FONT_WIDTH_EXT;
+        u32 str_x = (str_width >= SCREEN_WIDTH_BOT) ? 0 : (SCREEN_WIDTH_BOT - str_width) / 2;
+        ClearScreen(BOT_SCREEN, COLOR_STD_BG);
+        DrawStringF(BOT_SCREEN, str_x, 20, COLOR_STD_FONT, COLOR_STD_BG, "%s", instructions);
+        *swkbd_prev = NULL; // Force keyboard redraw
+    }
+
+    // handle keyboard
+    while (true) {
+        // draw keyboard if required
+        if (*swkbd != *swkbd_prev) {
+            DrawKeyBoardBox(*swkbd, COLOR_SWKBD_BOX);
+            DrawKeyBoard(*swkbd, *uppercase, true);
+            *swkbd_prev = *swkbd;
+        }
+
+        // handle user input
+        char key = KeyboardWait(*swkbd, *uppercase, true);
+        if (key == KEY_ALPHA) {
+            *swkbd = swkbd_alphabet;
+        } else if (key == KEY_SPECIAL) {
+            *swkbd = swkbd_special;
+        } else if (key == KEY_NUMPAD) {
+            *swkbd = swkbd_numpad;
+        } else if (key == KEY_CAPS) {
+            *uppercase = (*uppercase + 1) % 3;
+            DrawKeyBoard(*swkbd, *uppercase, true);
+        } else return key;
+    }
 }

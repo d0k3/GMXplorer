@@ -489,22 +489,34 @@ u32 GetDrawStringHeight(const char* str) {
     return height;
 }
 
-u32 GetCharSize(const char* str) {
-    const char *start = str;
-    do {
-        str++;
-    } while ((*str & 0xC0) == 0x80);
+static inline bool IsIntermediateByte(const char* chr) {
+ return (*chr & 0xC0) == 0x80 || (chr[-1] == '\r' && chr[0] == '\n');
+}
 
-    return str - start;
+const char* GetNextChar(const char* chr) {
+    do ++chr; while (IsIntermediateByte(chr));
+    return chr;
+}
+
+const char* GetPrevChar(const char* chr) {
+    do --chr; while (IsIntermediateByte(chr));
+    return chr;
+}
+
+u32 GetCharSize(const char* str) {
+    return GetNextChar(str) - str;
 }
 
 u32 GetPrevCharSize(const char* str) {
-    const char *start = str;
-    do {
-        str--;
-    } while ((*str & 0xC0) == 0x80);
+    return str - GetPrevChar(str);
+}
 
-    return start - str;
+void IncChar(const char** chr) {
+    *chr = GetNextChar(*chr);
+}
+
+void DecChar(const char** chr) {
+    *chr = GetPrevChar(*chr);
 }
 
 u32 GetDrawStringWidth(const char* str) {

@@ -18,6 +18,7 @@
 #include "ips.h"
 #include "bps.h"
 #include "pxi.h"
+#include "utf.h"
 
 
 #define _MAX_ARGS       4
@@ -56,6 +57,7 @@
 
 #define TV_NLIN_DISP    (SCREEN_HEIGHT / (FONT_HEIGHT_EXT + (2*TV_VPAD)))
 #define TV_LLEN_DISP    (((SCREEN_WIDTH_TOP - (2*TV_HPAD)) / FONT_WIDTH_EXT) - (TV_LNOS + 1))
+#define MAX_CHAR_SIZE   4 // Max number of bytes needed for a UTF-8 character.
 
 // some useful macros
 #define IS_WHITESPACE(c)    ((c == ' ') || (c == '\t') || (c == '\r') || (c == '\n'))
@@ -205,6 +207,10 @@ static const Gm9ScriptCmd cmd_list[] = {
     { CMD_ID_BKPT    , "bkpt"    , 0, 0 }
 };
 
+// off-screen string indicators
+static const char al_str[] = "<< ";
+static const char ar_str[] = " >>";
+
 // global vars for preview
 static u32 preview_mode = 0; // 0 -> off 1 -> quick 2 -> full
 static u32 script_color_active = 0;
@@ -259,84 +265,126 @@ static inline u32 hexntostr(const u8* hex, char* str, u32 len) {
     return len;
 }
 
-static inline u32 line_len(const char* text, u32 len, u32 ww, const char* line, char** eol) {
-    u32 last = ((text + len) - line);
-    u32 llen = 0;
-    char* lf = NULL;
-    char* spc = NULL;
+// we determine the line endings of a text file by simple majority;
+// correcting mixed line endings is outside the scope of this program.
+static inline bool is_crlf(const char* str) {
+    u32 crlf = 0, lf = 0;
+    do if (str[0] == '\n') ++lf; else if (str[0] == '\r' && str[1] == '\n') ++crlf, ++str;
+    while (*str++);
+    return crlf > lf;
+}
 
-    if (line >= (text + len))
+static inline bool is_newline(const char* chr) {
+    return chr[0] == '\n' || (chr[0] == '\r' && chr[1] == '\n');
+}
+
+// to ease calculations related to supporting mutlibyte UTF-8 characters
+static inline u32 bytes_in_chars_u32(const char* str, u32 nchars) {
+    u32 bytes = 0;
+    for (u32 i = 0; str[bytes] && i < nchars; bytes += GetCharSize(str + bytes), ++i);
+    return bytes;
+}
+
+static inline int bytes_in_chars_int(const char* str, int nchars) {
+    int bytes = 0;
+    for (int i = 0; str[bytes] && i < nchars; bytes += GetCharSize(str + bytes), ++i);
+    return bytes;
+}
+
+static inline int chars_in_bytes(const char* str, int nbytes) {
+    int chars = 0;
+    for (int i = 0; str[chars] && i < nbytes; i += GetCharSize(str + i), ++chars);
+    return chars;
+}
+
+static inline u32 chars_between_pointers(const char* start, const char* end) {
+    u32 chars = 0;
+    for (const char* i = start; *i && i < end; IncChar(&i), ++chars);
+    return chars;
+}
+
+static inline u32 line_len_chars(const char* text, u32 len, u32 ww, const char* line, const char** eol) {
+    u32 llen = 0;
+    const char* lf = NULL;
+    const char* spc = NULL;
+    u32 spc_len = 0;
+    const char* lptr = line;
+
+    if (line > text + len)
         return 0; // early exit
 
     // search line feeds, spaces (only relevant for wordwrapped)
-    for (llen = 0; !ww || (llen < ww); llen++) {
-        if (ww && (line[llen] == ' ')) spc = (char*) (line + llen);
-        if (!line[llen] || (line[llen] == '\n') || (llen >= last)) {
-            lf = (char*) (line + llen);
+    for (; !ww || (llen < ww); IncChar(&lptr), ++llen) {
+        if (ww && (*lptr == ' ')) {
+            spc = lptr;
+            spc_len = llen;
+        }
+        if (is_newline(lptr) || lptr >= text + len) {
+            lf = lptr;
             break;
         }
     }
 
     // line feed found, truncate trailing "empty" chars
     // for wordwrapped, stop line after last space (if any)
-    if (lf) for (; (llen > 0) && (line[llen-1] <= ' '); llen--);
-    else if (ww && spc) llen = (spc - line) + 1;
+    if (lf) for (; lptr > line && *GetPrevChar(lptr) < ' '; DecChar(&lptr), --llen);
+    else if (ww && spc) llen = spc_len + 1;
 
     // signal eol if required
     if (eol) *eol = lf;
     return llen;
 }
 
-static inline char* line_seek(const char* text, u32 len, u32 ww, const char* line, int add) {
-    // safety checks /
-    if (line < text) return NULL;
-    if ((line >= (text + len)) && (add >= 0)) return (char*) line;
+static inline const char* line_seek_chars(const char* text, u32 len, u32 ww, const char* line, int add) {
+    // safety check
+    if ((line <= text && add <= 0) || (line >= text + len && add >= 0)) return line;
+
+    const char* l0 = line;
 
     if (!ww) { // non wordwrapped mode
-        char* lf = ((char*) line - 1);
+        for (; add < 0 && l0 > text; add++)
+            for (DecChar(&l0); l0 > text && l0[-1] != '\n'; DecChar(&l0));
 
-        // ensure we are at the start of the line
-        while ((lf > text) && (*lf != '\n')) lf--;
+        for (; add > 0 && l0 < text + len; add--)
+            for (IncChar(&l0); l0 < text + len && l0[-1] != '\n'; IncChar(&l0));
 
-        // handle backwards search
-        for (; (add < 0) && (lf >= text); add++)
-            for (lf--; (lf >= text) && (*lf != '\n'); lf--);
-
-        // handle forwards search
-        for (; (add > 0) && (lf < text + len); add--)
-            for (lf++; (lf < text + len) && (*lf != '\n'); lf++);
-
-        return lf + 1;
+        return l0;
     } else { // wordwrapped mode
-        char* l0 = (char*) line;
-
         // handle forwards wordwrapped search
-        for (; (add > 0) && (l0 < text + len); add--) {
-            char* eol = NULL;
-            u32 llenww = line_len(text, len, ww, l0, &eol);
-            if (eol || !llenww) l0 = line_seek(text, len, 0, l0, 1);
-            else l0 += llenww;
+        for (; add > 0 && l0 < text + len; add--) {
+            const char* eol = NULL;
+            u32 llenww_chars = line_len_chars(text, len, ww, l0, &eol);
+            if (eol || !llenww_chars) l0 = line_seek_chars(text, len, 0, l0, 1);
+            else l0 += bytes_in_chars_u32(l0, llenww_chars);
         }
 
         // handle backwards wordwrapped search
-        while ((add < 0) && (l0 > text)) {
-            char* l1 = line_seek(text, len, 0, l0, -1);
-            char* l0_minus1 = l1;
+        while (add < 0 && l0 > text) {
+            const char* l1 = line_seek_chars(text, len, 0, l0, -1);
+            if (l0 > text + len) {
+                l0 = text + len;
+                if (l1 == l0) ++add;
+            }
+            const char* l0_minus1 = l1;
             int nlww = 0; // no of wordwrapped lines in paragraph
-            for (char* ld = l1; ld < l0; ld = line_seek(text, len, ww, ld, 1), nlww++)
+            for (const char* ld = l1; ld < l0; ld = line_seek_chars(text, len, ww, ld, 1), nlww++)
                 l0_minus1 = ld;
+            if (line > text + len && l0 == text + len && chars_in_bytes(l0_minus1, l0 - l0_minus1) == (int) ww) ++add;
             if (add + nlww < 0) { // haven't reached the desired line yet
                 add += nlww;
                 l0 = l1;
             } else { // reached the desired line
-                l0 = (add == -1) ? l0_minus1 : line_seek(text, len, ww, l1, nlww + add);
+                l0 = (add == -1) ? l0_minus1 : line_seek_chars(text, len, ww, l1, nlww + add);
                 add = 0;
             }
         }
 
-
         return l0;
     }
+}
+
+static inline const char* line_start(const char* text, u32 len, u32 ww, const char* ptr) {
+    return line_seek_chars(text, len, ww, GetNextChar(ptr), -1);
 }
 
 static inline u32 get_lno(const char* text, u32 len, const char* line) {
@@ -1614,7 +1662,7 @@ bool run_line(const char* line_start, const char* line_end, u32* flags, char* er
 
 // checks for illegal ASCII symbols
 bool ValidateText(const char* text, u32 len) {
-    if (!len) return false;
+    if (!len) return true;
     for (u32 i = 0; i < len; i++) {
         char c = text[i];
         if ((c == '\r') && ((i+1) < len) && (text[i+1] != '\n')) return false; // CR without LF
@@ -1624,71 +1672,198 @@ bool ValidateText(const char* text, u32 len) {
     return true;
 }
 
-void MemTextView(const char* text, u32 len, char* line0, int off_disp, int lno, u32 ww, u32 mno, bool is_script) {
+void MemTextView(const char* text, u32 len, const char* line0, int off_disp_chars, int lno, u32 ww, u32 mno, bool is_script, const char* cursor, const char* cursor_end) {
     // block placements
-    const char* al_str = "<< ";
-    const char* ar_str = " >>";
     u32 x_txt = (TV_LNOS >= 0) ? TV_HPAD + ((TV_LNOS+1)*FONT_WIDTH_EXT) : TV_HPAD;
     u32 x_lno = TV_HPAD;
-    u32 p_al = 0;
-    u32 p_ar = TV_LLEN_DISP - strlen(ar_str);
-    u32 x_al = x_txt + (p_al * FONT_WIDTH_EXT);
-    u32 x_ar = x_txt + (p_ar * FONT_WIDTH_EXT);
+    u32 x_al = x_txt;
+    u32 x_ar = x_txt + ((TV_LLEN_DISP - strlen(ar_str)) * FONT_WIDTH_EXT);
 
     // display text on screen
-    char txtstr[TV_LLEN_DISP + 1];
-    char* ptr = line0;
+    char txtstr[TV_LLEN_DISP * MAX_CHAR_SIZE + 1];
+    const char* ptr = line0;
     u32 nln = lno;
+    bool last_empty_line_drawn = false;
     for (u32 y = TV_VPAD; y < SCREEN_HEIGHT; y += FONT_HEIGHT_EXT + (2*TV_VPAD)) {
-        char* ptr_next = line_seek(text, len, ww, ptr, 1);
-        u32 llen = line_len(text, len, ww, ptr, NULL);
-        u32 ncpy = ((int) llen < off_disp) ? 0 : (llen - off_disp);
-        if (ncpy > TV_LLEN_DISP) ncpy = TV_LLEN_DISP;
-        bool al = !ww && off_disp && (ptr != ptr_next);
-        bool ar = !ww && (llen > off_disp + TV_LLEN_DISP);
+        // account for multibyte chacters and word wrap when drawing lines
+        int off_disp_bytes = bytes_in_chars_int(ptr, off_disp_chars);
+        const char* ptr_next = line_seek_chars(text, len, ww, ptr, 1);
+        u32 llen_chars = line_len_chars(text, len, ww, ptr, NULL);
+        u32 llen_bytes = bytes_in_chars_u32(ptr, llen_chars);
+        u32 tv_llen_disp_chars = llen_chars;
+        if (tv_llen_disp_chars > TV_LLEN_DISP) tv_llen_disp_chars = TV_LLEN_DISP;
+        u32 tv_llen_disp_bytes = bytes_in_chars_u32(ptr + off_disp_bytes, tv_llen_disp_chars);
+        u32 ncpy_bytes = ((int) llen_bytes < off_disp_bytes) ? 0 : (llen_bytes - off_disp_bytes);
+        if (ncpy_bytes > tv_llen_disp_bytes) ncpy_bytes = tv_llen_disp_bytes;
+        bool al = !ww && off_disp_chars && (ptr != ptr_next);
+        bool ar = !ww && (llen_chars + 1 > off_disp_chars + TV_LLEN_DISP);
 
         // set text color / find start of comment of scripts
         u32 color_text = (nln == mno) ? script_color_active : (is_script) ? script_color_code : (u32) COLOR_TVTEXT;
-        int cmt_start = TV_LLEN_DISP; // start of comment in current displayed line (may be negative)
+        int cmt_start_bytes = TV_LLEN_DISP; // start of comment in current displayed line (may be negative)
+        int cmt_start_chars = 0;
         if (is_script && (nln != mno)) {
-            char* hash = line_seek(text, len, 0, ptr, 0);
-            for (; *hash != '#' && (hash - ptr < (int) llen); hash++);
-            cmt_start = (hash - ptr) - off_disp;
+            const char* hash = line_start(text, len, 0, ptr);
+            for (; *hash != '#' && hash - ptr < (int) llen_bytes; hash++);
+            cmt_start_bytes = hash - (ptr + off_disp_bytes);
+            if (cmt_start_bytes <= 0) color_text = script_color_comment;
+            else cmt_start_chars = chars_in_bytes(ptr + off_disp_bytes, cmt_start_bytes);
         }
-        if (cmt_start <= 0) color_text = script_color_comment;
 
         // build text string
-        snprintf(txtstr, sizeof(txtstr), "%-*.*s", (int) TV_LLEN_DISP, (int) TV_LLEN_DISP, "");
-        if (ncpy) memcpy(txtstr, ptr + off_disp, ncpy);
+        snprintf(txtstr, sizeof(txtstr), "%-*.*s", (int) (TV_LLEN_DISP * MAX_CHAR_SIZE), (int) (TV_LLEN_DISP * MAX_CHAR_SIZE), "");
+        if (ncpy_bytes) {
+            memcpy(txtstr, ptr + off_disp_bytes, ncpy_bytes);
+        }
         for (char* d = txtstr; *d; d++) if (*d < ' ') *d = ' ';
-        if (al) memcpy(txtstr + p_al, al_str, strlen(al_str));
-        if (ar) memcpy(txtstr + p_ar, ar_str, strlen(ar_str));
+        if (ar) {
+            char* textstr_end = txtstr + ncpy_bytes;
+            u32 txtstr_ar_bytes = 0;
+            for (int txtstr_ar_i = 0; txtstr_ar_i < (int) strlen(ar_str); txtstr_ar_bytes += GetPrevCharSize(textstr_end - txtstr_ar_bytes), ++txtstr_ar_i);
+            memcpy(textstr_end - txtstr_ar_bytes, ar_str, sizeof(ar_str));
+        }
+        if (al) {
+            u32 txtstr_al_bytes = bytes_in_chars_u32(txtstr, strlen(al_str));
+            memmove(txtstr + strlen(al_str), txtstr + txtstr_al_bytes, sizeof(txtstr) - txtstr_al_bytes);
+            memcpy(txtstr, al_str, strlen(al_str));
+        }
 
         // draw line number & text
         DrawString(TOP_SCREEN, txtstr, x_txt, y, color_text, COLOR_STD_BG);
         if (TV_LNOS > 0) { // line number
-            if (ptr != ptr_next)
-                DrawStringF(TOP_SCREEN, x_lno, y, ((ptr == text) || (*(ptr-1) == '\n')) ? COLOR_TVOFFS : COLOR_TVOFFSL, COLOR_STD_BG, "%0*lu", TV_LNOS, nln);
+            // edge case to draw line number when the last null-byte character is word-wrapped onto its own line...
+            bool prev_ww_line_full = ww && ww == chars_between_pointers(line_seek_chars(text, len, ww, ptr, -1), ptr);
+            bool last_line_empty = ptr == text + len && (!len || ptr[-1] == '\n' || prev_ww_line_full) && !last_empty_line_drawn;
+            if (ptr != ptr_next || last_line_empty) {
+                DrawStringF(TOP_SCREEN, x_lno, y, ((ptr == text) || (ptr[-1] == '\n')) ? COLOR_TVOFFS : COLOR_TVOFFSL, COLOR_STD_BG, "%0*lu", TV_LNOS, nln);
+                if (last_line_empty) last_empty_line_drawn = true;
+            }
             else DrawStringF(TOP_SCREEN, x_lno, y, COLOR_TVOFFSL, COLOR_STD_BG, "%*.*s", TV_LNOS, TV_LNOS, " ");
         }
 
+        const int x_txt_end = x_txt + TV_LLEN_DISP * FONT_WIDTH_EXT;
+        bool draw_ar_select = false, draw_al_select = false;
+
+        // account for selections drawn across lines
+        DrawPixel(TOP_SCREEN, x_txt, y - 1, COLOR_STD_BG);
+        DrawPixel(TOP_SCREEN, x_txt_end - 1, y - 1, COLOR_STD_BG);
+        DrawPixel(TOP_SCREEN, x_txt, y + FONT_HEIGHT_EXT, COLOR_STD_BG);
+        DrawPixel(TOP_SCREEN, x_txt_end - 1, y + FONT_HEIGHT_EXT, COLOR_STD_BG);
+
+        // draw selection
+        if (cursor_end) {
+            int x_hline_start = -1, x_hline_end = -1;
+
+            u32 cursor_line_offset_chars = chars_between_pointers(ptr + off_disp_bytes, cursor);
+            bool draw_cursor = cursor >= ptr + off_disp_bytes && cursor <= ptr + off_disp_bytes + ncpy_bytes && cursor_line_offset_chars < TV_LLEN_DISP
+                && (cursor != ptr + off_disp_bytes + ncpy_bytes || is_newline(cursor) || cursor == text + len);
+            if (draw_cursor) {
+                x_hline_start = x_txt + cursor_line_offset_chars * FONT_WIDTH_EXT;
+                DrawRectangle(TOP_SCREEN, x_hline_start, y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+            } else if (cursor < ptr + off_disp_bytes) x_hline_start = x_txt;
+
+            const char* cursor_end_prev = GetPrevChar(cursor_end);
+            u32 cursor_end_line_offset_chars = chars_between_pointers(ptr + off_disp_bytes, cursor_end_prev);
+            bool draw_cursor_end = cursor_end_prev >= ptr + off_disp_bytes && cursor_end_prev <= ptr + off_disp_bytes + ncpy_bytes && cursor_end_line_offset_chars < TV_LLEN_DISP
+                && (!ww || cursor_end_prev != ptr + off_disp_bytes + ncpy_bytes || is_newline(cursor_end_prev));
+            if (draw_cursor_end) {
+                x_hline_end = x_txt + (cursor_end_line_offset_chars + 1) * FONT_WIDTH_EXT;
+                // account for selections drawn at the end of the screen; they should be one pixel thinner so that they are drawn over by text on the next screen redraw
+                DrawRectangle(TOP_SCREEN, x_hline_end - ((cursor_end_line_offset_chars == TV_LLEN_DISP - 1) ? 1 : 0), y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+                cursor_end = NULL; // prevent cursor from being drawn multiple times at the end of the screen
+            } else if (cursor_end_prev >= ptr + off_disp_bytes + ncpy_bytes) x_hline_end = x_txt_end;
+
+            // edge cases related to drawing multi-line selections
+            if (draw_cursor && draw_cursor_end) {
+                DrawRectangle(TOP_SCREEN, x_hline_start, y, x_hline_end - x_hline_start, 1, COLOR_YELLOW);
+                DrawRectangle(TOP_SCREEN, x_hline_start, y + FONT_HEIGHT_EXT - 1, x_hline_end - x_hline_start, 1, COLOR_YELLOW);
+            } else if (draw_cursor) {
+                DrawRectangle(TOP_SCREEN, x_hline_start, y, x_txt_end - x_hline_start, 1, COLOR_YELLOW);
+                if (cursor_end > ptr_next) {
+                    DrawRectangle(TOP_SCREEN, x_txt, y + FONT_HEIGHT_EXT - 1, x_hline_start - x_txt, 1, COLOR_YELLOW);
+                    DrawPixel(TOP_SCREEN, x_txt, y + FONT_HEIGHT_EXT, COLOR_YELLOW);
+                    DrawPixel(TOP_SCREEN, x_txt_end - 1, y + FONT_HEIGHT_EXT, COLOR_YELLOW);
+                } else {
+                    DrawRectangle(TOP_SCREEN, x_hline_start, y + FONT_HEIGHT_EXT - 1, x_txt_end - x_hline_start, 1, COLOR_YELLOW);
+                    cursor_end = NULL;
+                }
+                DrawRectangle(TOP_SCREEN, x_txt_end - 1, y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+                draw_ar_select = true;
+            } else if (draw_cursor_end) {
+                if (cursor < ptr) {
+                    DrawRectangle(TOP_SCREEN, x_hline_end, y, x_txt_end - x_hline_end, 1, COLOR_YELLOW);
+                    DrawPixel(TOP_SCREEN, x_txt, y - 1, COLOR_YELLOW);
+                    DrawPixel(TOP_SCREEN, x_txt_end - 1, y - 1, COLOR_YELLOW);
+                } else {
+                    DrawRectangle(TOP_SCREEN, x_txt, y, x_hline_end - x_txt, 1, COLOR_YELLOW);
+                }
+                DrawRectangle(TOP_SCREEN, x_txt, y + FONT_HEIGHT_EXT - 1, x_hline_end - x_txt, 1, COLOR_YELLOW);
+                DrawRectangle(TOP_SCREEN, x_txt, y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+                draw_al_select = true;
+            } else if (cursor < ptr_next) {
+                if (cursor < ptr + off_disp_bytes) {
+                    DrawRectangle(TOP_SCREEN, x_txt, y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+                    if (cursor >= ptr) DrawRectangle(TOP_SCREEN, x_txt, y, x_txt_end - x_txt, 1, COLOR_YELLOW);
+                    else {
+                        DrawPixel(TOP_SCREEN, x_txt, y - 1, COLOR_YELLOW);
+                        DrawPixel(TOP_SCREEN, x_txt_end - 1, y - 1, COLOR_YELLOW);
+                    }
+                    draw_al_select = true;
+                } else if (cursor >= ptr + off_disp_bytes + ncpy_bytes) {
+                    DrawRectangle(TOP_SCREEN, x_txt_end - 1, y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+                    DrawRectangle(TOP_SCREEN, x_txt, y + FONT_HEIGHT_EXT - 1, x_txt_end - x_txt, 1, COLOR_YELLOW);
+                    draw_ar_select = true;
+                }
+                if (cursor_end_prev < ptr + off_disp_bytes) {
+                    DrawRectangle(TOP_SCREEN, x_txt, y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+                    DrawRectangle(TOP_SCREEN, x_txt, y, x_txt_end - x_txt, 1, COLOR_YELLOW);
+                    cursor_end = NULL;
+                    draw_al_select = true;
+                } else if (cursor_end_prev >= ptr + off_disp_bytes + ncpy_bytes) {
+                    DrawRectangle(TOP_SCREEN, x_txt_end - 1, y, 1, FONT_HEIGHT_EXT, COLOR_YELLOW);
+                    if (cursor_end_prev < ptr_next) {
+                        DrawRectangle(TOP_SCREEN, x_txt, y + FONT_HEIGHT_EXT - 1, x_txt_end - x_txt, 1, COLOR_YELLOW);
+                        cursor_end = NULL;
+                    } else {
+                        DrawPixel(TOP_SCREEN, x_txt, y + FONT_HEIGHT_EXT, COLOR_YELLOW);
+                        DrawPixel(TOP_SCREEN, x_txt_end - 1, y + FONT_HEIGHT_EXT, COLOR_YELLOW);
+                    }
+                    draw_ar_select = true;
+                }
+            }
+
+            if (!cursor_end) cursor = NULL;
+        } else if (cursor) { // draw cursor
+            u32 cursor_line_offset_chars = chars_between_pointers(ptr + off_disp_bytes, cursor);
+            if (cursor >= ptr + off_disp_bytes && cursor <= ptr + off_disp_bytes + ncpy_bytes && cursor_line_offset_chars < TV_LLEN_DISP
+                    && (cursor != ptr + off_disp_bytes + ncpy_bytes || is_newline(cursor) || cursor == text + len)) {
+                DrawRectangle(TOP_SCREEN, x_txt + cursor_line_offset_chars * FONT_WIDTH_EXT, y, FONT_WIDTH_EXT, 1, COLOR_RED);
+                // account for cursors drawn at the end of the screen; they should be one pixel thinner so that they are drawn over by text on the next screen redraw
+                DrawRectangle(TOP_SCREEN, x_txt + (cursor_line_offset_chars + 1) * FONT_WIDTH_EXT - ((cursor_line_offset_chars == TV_LLEN_DISP - 1) ? 1 : 0), y, 1, FONT_HEIGHT_EXT, COLOR_RED);
+                DrawRectangle(TOP_SCREEN, x_txt + cursor_line_offset_chars * FONT_WIDTH_EXT, y, 1, FONT_HEIGHT_EXT, COLOR_RED);
+                DrawRectangle(TOP_SCREEN, x_txt + cursor_line_offset_chars * FONT_WIDTH_EXT, y + FONT_HEIGHT_EXT - 1, FONT_WIDTH_EXT, 1, COLOR_RED);
+                cursor = NULL; // prevent cursor from being drawn multiple times at the end of a file
+            }
+        }
+
         // colorize comment if is_script
-        if ((cmt_start > 0) && ((u32) cmt_start < TV_LLEN_DISP)) {
-            memset(txtstr, ' ', cmt_start);
+        if (cmt_start_chars > 0 && cmt_start_chars < (int) TV_LLEN_DISP) {
+            memset(txtstr, ' ', cmt_start_bytes);
+            memmove(txtstr + cmt_start_chars, txtstr + cmt_start_bytes, sizeof(txtstr) - cmt_start_bytes);
             DrawString(TOP_SCREEN, txtstr, x_txt, y, script_color_comment, COLOR_TRANSPARENT);
         }
 
         // colorize arrows
-        if (al) DrawStringF(TOP_SCREEN, x_al, y, COLOR_TVOFFS, COLOR_TRANSPARENT, "%s", al_str);
-        if (ar) DrawStringF(TOP_SCREEN, x_ar, y, COLOR_TVOFFS, COLOR_TRANSPARENT, "%s", ar_str);
+        if (al) DrawStringF(TOP_SCREEN, x_al, y, draw_al_select ? COLOR_TINTEDYELLOW : COLOR_TVOFFS, COLOR_TRANSPARENT, "%s", al_str);
+        if (ar) DrawStringF(TOP_SCREEN, x_ar, y, draw_ar_select ? COLOR_TINTEDYELLOW : COLOR_TVOFFS, COLOR_TRANSPARENT, "%s", ar_str);
 
         // advance pointer / line number
-        for (char* c = ptr; c < ptr_next; c++) if (*c == '\n') ++nln;
+        for (const char* c = ptr; c < ptr_next; c++) if (*c == '\n') ++nln;
         ptr = ptr_next;
     }
 }
 
-bool MemTextViewer(const char* text, u32 len, u32 start, bool as_script) {
+bool MemTextViewer(const char* text, u32 len, u32 start, bool as_script, u32 max_len, const char* save_path) {
     u32 ww = TV_LLEN_DISP;
 
     // check if this really is text
@@ -1697,11 +1872,37 @@ bool MemTextViewer(const char* text, u32 len, u32 start, bool as_script) {
         return false;
     }
 
-    // clear screens
-    ClearScreenF(true, true, COLOR_STD_BG);
+    static const char keys_ml_alphabet[] = { SWKBD_KEYS_ML_ALPHABET };
+    static const char keys_special[] = { SWKBD_KEYS_SPECIAL };
+    static const char keys_numpad[] = { SWKBD_KEYS_NUMPAD };
+    static const u8 layout_ml_alphabet[] = { SWKBD_LAYOUT_ML_ALPHABET };
+    static const u8 layout_special[] = { SWKBD_LAYOUT_SPECIAL };
+    static const u8 layout_numpad[] = { SWKBD_LAYOUT_NUMPAD };
+    TouchBox swkbd_alphabet[64];
+    TouchBox swkbd_special[32];
+    TouchBox swkbd_numpad[32];
 
-    // instructions
-    ShowString("%s", STR_TEXTVIEWER_CONTROLS_DETAILS);
+    u32 uppercase = 0;
+    TouchBox* swkbd = NULL;
+    TouchBox* swkbd_prev = NULL;
+
+    // generate keyboards
+    if (!BuildKeyboard(swkbd_alphabet, keys_ml_alphabet, layout_ml_alphabet, true)) return false;
+    if (!BuildKeyboard(swkbd_special, keys_special, layout_special, true)) return false;
+    if (!BuildKeyboard(swkbd_numpad, keys_numpad, layout_numpad, true)) return false;
+
+    char* text_cpy = NULL;
+    u32 text_cpy_len = 0;
+    if (max_len) {
+        // create a copy to check for changes against on exit
+        text_cpy = malloc(len + 1);
+        text_cpy_len = len;
+        if (!text_cpy) return false;
+        memcpy(text_cpy, text, len + 1);
+    }
+
+    // clear screens
+    ClearScreen(TOP_SCREEN, COLOR_STD_BG);
 
     // set script colors
     if (as_script) {
@@ -1710,56 +1911,260 @@ bool MemTextViewer(const char* text, u32 len, u32 start, bool as_script) {
         script_color_code = COLOR_TVCMD;
     }
 
-    // find maximum line len
-    u32 llen_max = 0;
-    for (char* ptr = (char*) text; ptr < (text + len); ptr = line_seek(text, len, 0, ptr, 1)) {
-        u32 llen = line_len(text, len, 0, ptr, NULL);
-        if (llen > llen_max) llen_max = llen;
-    }
-
-    // find last allowed lines (ww and nonww)
-    char* llast_nww = line_seek(text, len, 0, text + len, -TV_NLIN_DISP);
-    char* llast_ww = line_seek(text, len, TV_LLEN_DISP, text + len, -TV_NLIN_DISP);
-
-    char* line0 = (char*) text;
-    int lcurr = 1;
-    int off_disp = 0;
-    for (; lcurr < (int) start; line0 = line_seek(text, len, 0, line0, 1), lcurr++);
+    bool crlf = is_crlf(text);
+    bool display_view_instructions = true;
+    const char* cursor = NULL;
+    const char* cursor_end = NULL;
+    const char** last_cursor = &cursor;
+    char* clipboard = NULL;
+    const char* instructions = NULL;
+    const char* line0 = text;
+    int lcurr = 1; // Current line number
+    int off_disp_chars = 0; // non-word-wrapped offset
+    for (; lcurr < (int) start; line0 = line_seek_chars(text, len, 0, line0, 1), lcurr++);
     while (true) {
         // display text on screen
-        MemTextView(text, len, line0, off_disp, lcurr, ww, 0, as_script);
+        MemTextView(text, len, line0, off_disp_chars, lcurr, ww, 0, as_script, cursor, cursor_end);
 
-        // handle user input
-        u32 pad_state = InputWait(0);
-        char* line0_next = line0;
-        u32 step_ud = (pad_state & BUTTON_R1) ? TV_NLIN_DISP : 1;
-        u32 step_lr = (pad_state & BUTTON_R1) ? TV_LLEN_DISP : 1;
-        bool switched = (pad_state & BUTTON_R1);
-        if (pad_state & BUTTON_DOWN) line0_next = line_seek(text, len, ww, line0, step_ud);
-        else if (pad_state & BUTTON_UP) line0_next = line_seek(text, len, ww, line0, -step_ud);
-        else if (pad_state & BUTTON_RIGHT) off_disp += step_lr;
-        else if (pad_state & BUTTON_LEFT) off_disp -= step_lr;
-        else if (switched && (pad_state & BUTTON_X)) {
-            u64 lnext64 = ShowNumberPrompt(lcurr, STR_CURRENT_LINE_N_ENTER_NEW_LINE_BELOW, lcurr);
-            if (lnext64 && (lnext64 != (u64) -1)) line0_next = line_seek(text, len, 0, line0, (int) lnext64 - lcurr);
-            ShowString("%s", STR_TEXTVIEWER_CONTROLS_DETAILS);
-        } else if (switched && (pad_state & BUTTON_Y)) {
-            ww = ww ? 0 : TV_LLEN_DISP;
-            line0_next = line_seek(text, len, ww, line0, 0);
-        } else if (pad_state & (BUTTON_B|BUTTON_START)) break;
+        const char* line0_next = line0;
+
+        if (!cursor) { // view mode
+            if  (display_view_instructions) {
+                ClearScreen(BOT_SCREEN, COLOR_STD_BG);
+                ShowString("%s", max_len ? STR_TEXTEDITOR_CONTROLS_DETAILS : STR_TEXTVIEWER_CONTROLS_DETAILS);
+                display_view_instructions = false;
+            }
+
+            // handle user input
+            u32 pad_state = InputWait(0);
+            u32 step_ud = (pad_state & BUTTON_R1) ? TV_NLIN_DISP : 1;
+            u32 step_lr = (pad_state & BUTTON_R1) ? TV_LLEN_DISP : 1;
+            bool switched = (pad_state & BUTTON_R1);
+            if (pad_state & BUTTON_DOWN) line0_next = line_seek_chars(text, len, ww, line0, step_ud);
+            else if (pad_state & BUTTON_UP) line0_next = line_seek_chars(text, len, ww, line0, -step_ud);
+            else if (pad_state & BUTTON_RIGHT) off_disp_chars += step_lr;
+            else if (pad_state & BUTTON_LEFT) off_disp_chars -= step_lr;
+            else if (max_len && pad_state & BUTTON_A) {
+                cursor = line0;
+                off_disp_chars = 0;
+                uppercase = 0;
+                swkbd = swkbd_alphabet;
+                swkbd_prev = NULL;
+                instructions = clipboard ? STR_TEXTEDITOR_CONTROLS_CLIPBOARD : STR_TEXTEDITOR_CONTROLS_KEYBOARD;
+            }
+            else if (switched && pad_state & BUTTON_X) {
+                u64 lnext64 = ShowNumberPrompt(lcurr, STR_CURRENT_LINE_N_ENTER_NEW_LINE_BELOW, lcurr);
+                if (lnext64 && (lnext64 != (u64) -1))
+                    line0_next = line_seek_chars(text, len, 0, line_start(text, len, 0, line0), (int) lnext64 - lcurr);
+                ShowString("%s", STR_TEXTVIEWER_CONTROLS_DETAILS);
+            } else if (switched && pad_state & BUTTON_Y) {
+                ww = ww ? 0 : TV_LLEN_DISP;
+                line0_next = line_start(text, len, ww, line0);
+            } else if (pad_state & (BUTTON_B|BUTTON_START)) break;
+        } else { // edit mode
+            char key_pressed = ShowMultiLineKeyboard(instructions, swkbd_alphabet, swkbd_special, swkbd_numpad, &swkbd, &swkbd_prev, &uppercase);
+            instructions = NULL;
+            char key_character = 0;
+            u32 pad_state = HID_ReadState();
+            bool switched = pad_state & BUTTON_R1;
+            bool selected = pad_state & BUTTON_L1 || (cursor_end && switched);
+            const char** prev_last_cursor = last_cursor;
+            last_cursor = &cursor;
+            if (key_pressed == KEY_ESCAPE) {
+                cursor = NULL;
+                cursor_end = NULL;
+                display_view_instructions = true;
+            } else if (key_pressed == KEY_DOWN) {
+                const char** down_cursor = selected ? last_cursor = &cursor_end : &cursor;
+                if (!*down_cursor) *down_cursor = cursor;
+                const char* down_cursor_char = down_cursor == &cursor_end && cursor_end > cursor ? GetPrevChar(*down_cursor) : *down_cursor;
+                const char* cursor_line_start = line_start(text, len, ww, down_cursor_char);
+                u32 cursor_chars_from_line_start = chars_between_pointers(cursor_line_start, down_cursor_char);
+                *down_cursor = line_seek_chars(text, len, ww, cursor_line_start, switched ? TV_NLIN_DISP : 1);
+                *down_cursor = line_start(text, len, ww, *down_cursor);
+                const char* next_line_start = line_seek_chars(text, len, ww, *down_cursor, 1);
+                if (down_cursor == &cursor_end) for (u32 i = 0; *down_cursor < next_line_start && i <= cursor_chars_from_line_start; IncChar(down_cursor), ++i);
+                else for (u32 i = 0; GetNextChar(*down_cursor) < next_line_start && i < cursor_chars_from_line_start; IncChar(down_cursor), ++i);
+                if (!selected) cursor_end = NULL;
+            } else if (key_pressed == KEY_UP) {
+                if (selected && !cursor_end) cursor_end = cursor;
+                const char* cursor_line_start = line_start(text, len, ww, cursor);
+                u32 cursor_chars_from_line_start = chars_between_pointers(cursor_line_start, cursor);
+                cursor = line_seek_chars(text, len, ww, cursor_line_start, -(switched ? TV_NLIN_DISP : 1));
+                const char* next_line_start = line_seek_chars(text, len, ww, cursor, 1);
+                for (u32 i = 0; GetNextChar(cursor) < next_line_start && i < cursor_chars_from_line_start; IncChar(&cursor), ++i);
+                if (!selected) cursor_end = NULL;
+            } else if (key_pressed == KEY_RIGHT) {
+                const char** right_cursor = selected ? last_cursor = &cursor_end : &cursor;
+                if (!*right_cursor) *right_cursor = cursor;
+                if (switched) {
+                    const char* cursor_line_start = line_start(text, len, ww, right_cursor == &cursor_end && cursor_end > cursor ? GetPrevChar(*right_cursor) : *right_cursor);
+                    const char* next_line_start = line_seek_chars(text, len, ww, cursor_line_start, 1);
+                    if (right_cursor == &cursor && next_line_start == text + len && (!ww || chars_between_pointers(cursor_line_start, next_line_start) != TV_LLEN_DISP))
+                        IncChar(&next_line_start); 
+                    if (right_cursor == &cursor_end) for (u32 chars = 0; *right_cursor < next_line_start && chars < TV_LLEN_DISP; ++chars) IncChar(right_cursor);
+                    else for (u32 chars = 0; GetNextChar(*right_cursor) < next_line_start && !is_newline(*right_cursor) && chars < TV_LLEN_DISP; ++chars) IncChar(right_cursor);
+                }
+                else if (*right_cursor < text + len) IncChar(right_cursor);
+                if (!selected) cursor_end = NULL;
+            } else if (key_pressed == KEY_LEFT) {
+                if (selected && !cursor_end) cursor_end = cursor;
+                if (switched) {
+                    const char* cursor_line_start = line_start(text, len, ww, cursor);
+                    while (cursor > cursor_line_start) DecChar(&cursor);
+                }
+                else if (cursor > text) DecChar(&cursor);
+                if (!selected) cursor_end = NULL;
+            } else if (key_pressed == KEY_BKSPC) {
+                if (cursor_end && cursor_end > cursor) {
+                    memmove((char *) cursor, cursor_end, text + len - cursor_end + 1);
+                    len -= cursor_end - cursor;
+                    cursor_end = NULL;
+                } else if (cursor > text) {
+                    u32 size = GetPrevCharSize(cursor);
+                    memmove((char *) cursor - size, cursor, text + len - cursor + 1);
+                    len -= size;
+                    cursor -= size;
+                }
+            } else if (key_pressed == KEY_UNICODE) {
+                if (cursor_end) last_cursor = prev_last_cursor;
+                else if (cursor >= text + 4 && cursor <= text + len) {
+                    u16 codepoint = 0;
+                    for (const char *c = cursor - 4; c < cursor; c++) {
+                        if ((*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'F') || (*c >= 'a' && *c <= 'f')) {
+                            codepoint <<= 4;
+                            codepoint |= *c - (*c <= '9' ? '0' : ((*c <= 'F' ? 'A' : 'a') - 10));
+                        } else {
+                            codepoint = 0;
+                            break;
+                        }
+                    }
+
+                    if (codepoint != 0) {
+                        char character[5] = {0};
+                        u16 input[2] = {codepoint, 0};
+                        utf16_to_utf8((u8*) character, input, 4, 1);
+
+                        u32 char_size = GetCharSize(character);
+                        memmove((char *) cursor - 4 + char_size, cursor, text + len - cursor + 1);
+                        memcpy((char *) cursor - 4, character, char_size);
+                        cursor -= 4 - char_size;
+                        len -= 4 - char_size;
+                    }
+                }
+            } else if (key_pressed == KEY_CLIP) { // clipboard
+                if (clipboard) {
+                    if (switched) { // clear
+                        free(clipboard);
+                        clipboard = NULL;
+                        instructions = STR_TEXTEDITOR_CONTROLS_KEYBOARD;
+                        last_cursor = prev_last_cursor;
+                    } else { // paste
+                        int clip_size = strlen(clipboard);
+                        int select_size = cursor_end ? cursor_end - cursor : 0;
+                        if (clip_size && len - select_size + clip_size <= max_len) {
+                            if (clip_size != select_size) {
+                                const char* select_end = cursor_end ? cursor_end : cursor;
+                                memmove((char *) cursor + clip_size, select_end, text + len - select_end + 1);
+                            }
+                            memcpy((char *) cursor, clipboard, clip_size);
+                            cursor += clip_size;
+                            cursor_end = NULL;
+                            len += clip_size - select_size;
+                        }
+                    }
+                } else if (cursor_end && cursor_end > cursor) { // copy
+                    int select_size = cursor_end - cursor;
+                    clipboard = malloc(select_size + 1);
+                    if (clipboard) {
+                        memcpy(clipboard, cursor, select_size);
+                        clipboard[select_size] = '\0';
+                        if (switched) { // cut
+                            memmove((char *) cursor, cursor_end, text + len - cursor_end + 1);
+                            len -= select_size;
+                            cursor_end = NULL;
+                        } else last_cursor = prev_last_cursor;
+                        instructions = STR_TEXTEDITOR_CONTROLS_CLIPBOARD;
+                    }
+                }
+            } else if (key_pressed == KEY_ENTER) key_character = crlf ? '\r' : '\n';
+            else if (key_pressed < 0x80) key_character = key_pressed;
+
+            // delete selection if typing standard char
+            if (key_character && cursor_end && cursor_end > cursor) {
+                memmove((char *) cursor, cursor_end, text + len - cursor_end + 1);
+                len -= cursor_end - cursor;
+                cursor_end = NULL;
+            }
+
+            // type standard char
+            if (key_character && len + (key_character == '\r' ? 1 : 0) < max_len) {
+                if (uppercase == 1) {
+                    uppercase = 0;
+                }
+                memmove((char *) cursor + 1, cursor, text + len++ - cursor + 1);
+                *((char *) cursor++) = key_character;
+                if (key_character == '\r') {
+                    memmove((char *) cursor + 1, cursor, text + len++ - cursor + 1);
+                    *((char *) cursor++) = '\n';
+                }
+            }
+
+            if (cursor_end <= cursor) cursor_end = NULL;
+
+            // adjust screen to view last cursor moved
+            const char* last_cursor_value = cursor_end && last_cursor == &cursor_end ? GetPrevChar(cursor_end) : cursor;
+            if (last_cursor_value && !ww) {
+                const char* cursor_line_start = line_start(text, len, ww, last_cursor_value);
+                u32 cursor_chars_from_line_start = chars_between_pointers(cursor_line_start, last_cursor_value);
+                if (cursor_chars_from_line_start < off_disp_chars + strlen(al_str)) off_disp_chars = cursor_chars_from_line_start - strlen(al_str);
+                if (cursor_chars_from_line_start >= off_disp_chars + TV_LLEN_DISP - strlen(ar_str)) off_disp_chars = cursor_chars_from_line_start + strlen(ar_str) - TV_LLEN_DISP + 1;
+            }
+            while (last_cursor_value && last_cursor_value < line0_next) line0_next = line_seek_chars(text, len, ww, line0_next, -1);
+            while (last_cursor_value && line0_next < line_seek_chars(text, len, ww, GetNextChar(last_cursor_value), -TV_NLIN_DISP)) line0_next = line_seek_chars(text, len, ww, line0_next, 1);
+        }
+
+        // find last allowed lines (ww and nonww)
+        const char* llast_nww = line_seek_chars(text, len, 0, text + len + 1, -TV_NLIN_DISP);
+        const char* llast_ww = line_seek_chars(text, len, TV_LLEN_DISP, text + len + 1, -TV_NLIN_DISP);
 
         // check for problems, apply changes
         if (!ww && (line0_next > llast_nww)) line0_next = llast_nww;
         else if (ww && (line0_next > llast_ww)) line0_next = llast_ww;
         if (line0_next < line0) { // fix line number for decrease
-            do if (*(--line0) == '\n') lcurr--;
+            do {
+                DecChar(&line0);
+                if (is_newline(line0)) lcurr--;
+            }
             while (line0 > line0_next);
         } else { // fix line number for increase / same
-            for (; line0_next > line0; line0++)
-                if (*line0 == '\n') lcurr++;
+            for (; line0_next > line0; IncChar(&line0)) if (is_newline(line0)) lcurr++;
         }
-        if (off_disp + TV_LLEN_DISP > llen_max) off_disp = llen_max - TV_LLEN_DISP;
-        if ((off_disp < 0) || ww) off_disp = 0;
+
+        // find maximum line length
+        u32 llen_max = 0;
+        for (const char* ptr = text; ptr < text + len; ptr = line_seek_chars(text, len, 0, ptr, 1)) {
+            u32 llen = line_len_chars(text, len, 0, ptr, NULL) + 1;
+            if (llen > llen_max) llen_max = llen;
+        }
+
+        if (off_disp_chars + TV_LLEN_DISP > llen_max) off_disp_chars = llen_max - TV_LLEN_DISP;
+        if (off_disp_chars < 0 || ww) off_disp_chars = 0;
+    }
+
+    if (clipboard) free(clipboard);
+
+    // check for user edits
+    if (text_cpy) {
+        if (save_path) {
+            bool diffs = false;
+            if (len != text_cpy_len) diffs = true;
+            else for (u32 i = 0; i < len; ++i) if (text[i] != text_cpy[i]) { diffs = true; break; }
+            if (diffs && ShowPrompt(true, "%s", STR_TEXT_EDITS_SAVE_CHANGES) && !FileSetData(save_path, text, len, 0, true))
+                ShowPrompt(false, "%s", STR_FAILED_WRITING_TO_FILE);
+        }
+
+        free(text_cpy);
     }
 
     // clear screens
@@ -1772,7 +2177,7 @@ bool MemTextViewer(const char* text, u32 len, u32 start, bool as_script) {
 // (misses safety checks for wider compatibility)
 bool MemToCViewer(const char* text, u32 len, const char* title) {
     const u32 max_captions = 24; // we assume this is enough
-    char* captions[max_captions];
+    const char* captions[max_captions];
     u32 lineno[max_captions];
     u32 ww = TV_LLEN_DISP;
 
@@ -1784,13 +2189,13 @@ bool MemToCViewer(const char* text, u32 len, const char* title) {
 
     // clear screens / view start of readme on top
     ClearScreenF(true, true, COLOR_STD_BG);
-    MemTextView(text, len, (char*) text, 0, 1, ww, 0, false);
+    MemTextView(text, len, text, 0, 1, ww, 0, false, NULL, NULL);
 
     // parse text for markdown captions
     u32 n_captions = 0;
-    char* ptr = (char*) text;
+    const char* ptr = text;
     for (u32 lno = 1;; lno++) {
-        char* ptr_next = line_seek(text, len, 0, ptr, 1);
+        const char* ptr_next = line_seek_chars(text, len, 0, ptr, 1);
         if (ptr == ptr_next) break;
         if (*ptr == '#') {
             captions[n_captions] = ptr;
@@ -1810,7 +2215,7 @@ bool MemToCViewer(const char* text, u32 len, const char* title) {
         y0 += 2 * (FONT_HEIGHT_EXT + (2*TV_VPAD));
         for (u32 i = 0; (i < n_captions) && (y0 < SCREEN_HEIGHT); i++) {
             u32 text_color = ((int) i == cursor) ? COLOR_TVRUN : COLOR_TVTEXT;
-            char* caption = captions[i];
+            const char* caption = captions[i];
             u32 len = 0;
             u32 lvl = 0;
             for (; *caption == '#'; caption++, lvl++);
@@ -1824,16 +2229,16 @@ bool MemToCViewer(const char* text, u32 len, const char* title) {
         // handle user input
         u32 pad_state = InputWait(0);
         if ((cursor >= 0) && (pad_state & BUTTON_A)) {
-            if (!MemTextViewer(text, len, lineno[cursor], false)) return false;
-            MemTextView(text, len, captions[cursor], 0, lineno[cursor], ww, 0, false);
+            if (!MemTextViewer(text, len, lineno[cursor], false, 0, NULL)) return false;
+            MemTextView(text, len, captions[cursor], 0, lineno[cursor], ww, 0, false, NULL, NULL);
         } else if (pad_state & BUTTON_B) {
             break;
         } else if (pad_state & BUTTON_UP) {
             cursor = (cursor <= 0) ? ((int) n_captions - 1) : cursor - 1;
-            MemTextView(text, len, captions[cursor], 0, lineno[cursor], ww, 0, false);
+            MemTextView(text, len, captions[cursor], 0, lineno[cursor], ww, 0, false, NULL, NULL);
         } else if (pad_state & BUTTON_DOWN) {
             if (++cursor >= (int) n_captions) cursor = 0;
-            MemTextView(text, len, captions[cursor], 0, lineno[cursor], ww, 0, false);
+            MemTextView(text, len, captions[cursor], 0, lineno[cursor], ww, 0, false, NULL, NULL);
         }
     }
 
@@ -1846,18 +2251,20 @@ bool MemToCViewer(const char* text, u32 len, const char* title) {
 bool FileTextViewer(const char* path, bool as_script) {
     // load text file (completely into memory)
     // text file needs to fit inside the STD_BUFFER_SIZE
-    u32 flen, len;
+    size_t fileSize = FileGetSize(path);
+    if (fileSize >= STD_BUFFER_SIZE) {
+        ShowPrompt(false, STR_ERROR_TEXT_FILE_TOO_BIG, fileSize, STD_BUFFER_SIZE - 1);
+        return false;
+    }
 
     char* text = malloc(STD_BUFFER_SIZE);
     if (!text) return false;
 
-    flen = FileGetData(path, text, STD_BUFFER_SIZE - 1, 0);
-
+    u32 flen = FileGetData(path, text, STD_BUFFER_SIZE - 1, 0);
     text[flen] = '\0';
-    len = (ptrdiff_t)memchr(text, '\0', flen + 1) - (ptrdiff_t)text;
 
     // let MemTextViewer take over
-    bool result = MemTextViewer(text, len, 1, as_script);
+    bool result = MemTextViewer(text, flen, 1, as_script, STD_BUFFER_SIZE - 1, path);
 
     free(text);
     return result;
@@ -1966,11 +2373,11 @@ bool ExecuteGM9Script(const char* path_script) {
             }
             if (show_preview) {
                 if (lno <= (TV_NLIN_DISP/2)) {
-                    MemTextView(script, script_size, script, 0, 1, 0, lno, true);
+                    MemTextView(script, script_size, script, 0, 1, 0, lno, true, NULL, NULL);
                 } else {
-                    char* ptr_view = line_seek(script, script_size, 0, ptr, -(TV_NLIN_DISP/2));
+                    const char* ptr_view = line_seek_chars(script, script_size, 0, ptr, -(TV_NLIN_DISP/2));
                     u32 lno_view = lno - (TV_NLIN_DISP/2);
-                    MemTextView(script, script_size, ptr_view, 0, lno_view, 0, lno, true);
+                    MemTextView(script, script_size, ptr_view, 0, lno_view, 0, lno, true, NULL, NULL);
                 }
             }
         }

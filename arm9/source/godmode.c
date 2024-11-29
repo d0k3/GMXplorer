@@ -1231,7 +1231,7 @@ u32 FileHandlerMenu(char* current_path, u32* cursor, u32* scroll, PaneData** pan
     int n_opt = 0;
     int special = (special_opt) ? ++n_opt : -1;
     int hexviewer = ++n_opt;
-    int textviewer = (filetype & TXT_GENERIC) ? ++n_opt : -1;
+    int textviewer = (filetype & TXT_GENERIC || FileGetSize(file_path) == 0) ? ++n_opt : -1;
     int calcsha256 = ++n_opt;
     int calcsha1 = ++n_opt;
     int calccmac = (CheckCmacPath(file_path) == 0) ? ++n_opt : -1;
@@ -1322,6 +1322,7 @@ u32 FileHandlerMenu(char* current_path, u32* cursor, u32* scroll, PaneData** pan
     }
     else if (user_select == textviewer) { // -> show in text viewer
         FileTextViewer(file_path, scriptable);
+        GetDirContents(current_dir, current_path);
         return 0;
     }
     else if (user_select == calcsha256) { // -> calculate SHA-256
@@ -2346,7 +2347,7 @@ u32 HomeMoreMenu(char* current_path) {
         char* sysinfo_txt = (char*) malloc(STD_BUFFER_SIZE);
         if (!sysinfo_txt) return 1;
         MyriaSysinfo(sysinfo_txt);
-        MemTextViewer(sysinfo_txt, strnlen(sysinfo_txt, STD_BUFFER_SIZE), 1, false);
+        MemTextViewer(sysinfo_txt, strnlen(sysinfo_txt, STD_BUFFER_SIZE), 1, false, 0, NULL);
         free(sysinfo_txt);
         return 0;
     }
