@@ -487,6 +487,7 @@
 	"CANCEL": "cancel",
 	"R_FAST_SCROLL_L_CLEAR_DATA": "R - (↑↓) fast scroll\nL - clear data",
 	"X_REMOVE_CHAR_Y_INSERT_CHAR": "X - remove char\nY - insert char",
+	"ETA_N_HOUR_N_MIN_N_SEC": "ETA %02lluh%02llum%02llus",
 	"ETA_N_MIN_N_SEC": "ETA %02llum%02llus",
 	"BRIGHTNESS_CONTROLS": "[←] Decrease brightness\n[→] Increase brightness\n \n[X] Use volume slider control\n[A] Set current brightness\n[B] Cancel",
 	"SEARCHING_PLEASE_WAIT": "Searching, please wait...",

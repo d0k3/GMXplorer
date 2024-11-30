@@ -487,6 +487,7 @@
 	"CANCEL": "annuler",
 	"R_FAST_SCROLL_L_CLEAR_DATA": "R - (↑↓) défilement rapide\nL - effacer les données",
 	"X_REMOVE_CHAR_Y_INSERT_CHAR": "X - supprimer le caractère\nY - insérer le caractère",
+	"ETA_N_HOUR_N_MIN_N_SEC": "ETA %02lluh%02llum%02llus",
 	"ETA_N_MIN_N_SEC": "ETA %02llum%02llus",
 	"BRIGHTNESS_CONTROLS": "[←] Decrease brightness\n[→] Increase brightness\n \n[X] Use volume slider control\n[A] Set current brightness\n[B] Cancel",
 	"SEARCHING_PLEASE_WAIT": "Recherche en cours, veuillez patienter…",

@@ -487,6 +487,7 @@
 	"CANCEL": "batal",
 	"R_FAST_SCROLL_L_CLEAR_DATA": "R - (↑↓) gulir cepat\nL - kosongkan data",
 	"X_REMOVE_CHAR_Y_INSERT_CHAR": "X - hapus karakter\nY - sisip karakter",
+	"ETA_N_HOUR_N_MIN_N_SEC": "Sisa %02lluh%02llumnt%02lludtk",
 	"ETA_N_MIN_N_SEC": "Sisa %02llumnt%02lludtk",
 	"BRIGHTNESS_CONTROLS": "[←] Kurangi kecerahan\n[→] Tingkatkan kecerahan\n \n[X] Pakai penggeser volume\n[A] Atur kecerahan saat ini\n[B] Batal",
 	"SEARCHING_PLEASE_WAIT": "Mencari, mohon tunggu...",

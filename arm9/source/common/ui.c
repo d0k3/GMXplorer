@@ -1431,7 +1431,11 @@ bool ShowProgress(u64 current, u64 total, const char* opstr)
     ResizeString(progstr, tempstr, bar_width / FONT_WIDTH_EXT, 8, false);
     DrawString(MAIN_SCREEN, progstr, bar_pos_x, text_pos_y, COLOR_STD_FONT, COLOR_STD_BG);
     if (sec_elapsed >= 1) {
-        snprintf(tempstr, sizeof(tempstr), STR_ETA_N_MIN_N_SEC, sec_remain / 60, sec_remain % 60);
+        if (sec_remain >= 3600) {
+            snprintf(tempstr, sizeof(tempstr), STR_ETA_N_HOUR_N_MIN_N_SEC, (sec_remain / 3600), (sec_remain / 60) % 60, sec_remain % 60);
+        } else {
+            snprintf(tempstr, sizeof(tempstr), STR_ETA_N_MIN_N_SEC, sec_remain / 60, sec_remain % 60);
+        }
         ResizeString(progstr, tempstr, 16, 8, true);
         DrawString(MAIN_SCREEN, progstr, bar_pos_x + bar_width - 1 - (FONT_WIDTH_EXT * 16),
             bar_pos_y - line_height - 1, COLOR_STD_FONT, COLOR_STD_BG);
