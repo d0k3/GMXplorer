@@ -1,4 +1,4 @@
-project_id_env: GM9_CROWDIN_ID
+project_id: 559689
 api_token_env: CROWDIN_TOKEN
 preserve_hierarchy: true
 

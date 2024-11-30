@@ -101,7 +101,7 @@ def strings_to_trf(mapping: dict[str, bytearray], version: int, language: str) -
     # Metadata section.
     trfdata += (
             b"META"
-            + struct.pack("<LLL32s", 40, version, len(mapping), language)
+            + struct.pack("<LLL32s", 40, version, len(mapping), language[:31])
     )
 
     # String data section.
