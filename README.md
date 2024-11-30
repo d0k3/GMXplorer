@@ -203,6 +203,7 @@ This tool would not have been possible without the help of numerous people. Than
 * **Lilith Valentine** for testing and helpful advice
 * **Project Nayuki** for [qrcodegen](https://github.com/nayuki/QR-Code-generator)
 * **Amazingmax fonts** for the Amazdoom font
+* **TakWolf** for [fusion-pixel-font](https://github.com/TakWolf/fusion-pixel-font) used for Chinese and Korean
 * The fine folks on **the official GodMode9 IRC channel and Discord server**
 * The fine folks on **freenode #Cakey**
 * All **[3dbrew.org](https://www.3dbrew.org/wiki/Main_Page) editors**
