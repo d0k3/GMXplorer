@@ -15,3 +15,9 @@ LDFLAGS += $(SUBARCH) -Wl,--use-blx,-Map,$(TARGET).map -flto
 
 include ../Makefile.common
 include ../Makefile.build
+
+arm9_data.elf: arm9.elf
+	$(OBJCOPY) -O elf32-littlearm -j .rodata* -j .data* -j .bss* $< $@
+
+arm9_code.elf: arm9.elf
+	$(OBJCOPY) -O elf32-littlearm -j .text* -j .vectors* $< $@

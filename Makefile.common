@@ -1,3 +1,4 @@
+export OBJDUMP	:=	arm-none-eabi-objdump
 
 dirname   = $(shell dirname $(1))
 

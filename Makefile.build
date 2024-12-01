@@ -11,11 +11,12 @@ all: $(TARGET).elf
 
 .PHONY: clean
 clean:
-	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).map
+	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).dis $(TARGET).map
 
 $(TARGET).elf: $(OBJECTS) $(OBJECTS_COMMON)
 	@mkdir -p "$(@D)"
 	@$(CC) $(LDFLAGS) $^ -o $@
+	@$(OBJDUMP) -S $@ > $@.dis
 
 $(BUILD)/%.cmn.o: $(COMMON_DIR)/%.c
 	@mkdir -p "$(@D)"
