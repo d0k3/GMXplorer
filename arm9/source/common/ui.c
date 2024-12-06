@@ -21,6 +21,7 @@
 #define FONT_MAX_WIDTH 8
 #define FONT_MAX_HEIGHT 10
 #define PROGRESS_REFRESH_RATE 30 // the progress bar is only allowed to draw to screen every X milliseconds
+#define PROGRESS_CANCEL_MIN_HOLD_MS 1000
 
 typedef struct {
     char chunk_id[4]; // NOT null terminated
@@ -1391,6 +1392,16 @@ bool ShowRtcSetterPrompt(void* time, const char *format, ...) {
     return ret;
 }
 
+static bool ShowProgressCancelCheck(u64 msec)
+{
+    static u64 last_msec = 0;
+
+    if (msec != 0 && CheckButton(BUTTON_B)) return (msec > last_msec + PROGRESS_CANCEL_MIN_HOLD_MS);
+
+    last_msec = msec;
+    return false;
+}
+
 bool ShowProgress(u64 current, u64 total, const char* opstr)
 {
     static u32 last_prog_width = 0;
@@ -1410,7 +1421,8 @@ bool ShowProgress(u64 current, u64 total, const char* opstr)
     if (!current) {
         timer = timer_start();
         last_sec_remain = 0;
-    } else if (timer_msec(timer) < last_msec_elapsed + PROGRESS_REFRESH_RATE) return !CheckButton(BUTTON_B);
+        ShowProgressCancelCheck(0); // reset counter
+    } else if (timer_msec(timer) < last_msec_elapsed + PROGRESS_REFRESH_RATE) return !ShowProgressCancelCheck(timer_msec(timer));
     last_msec_elapsed = timer_msec(timer);
     u64 sec_elapsed = (total > 0) ? timer_sec( timer ) : 0;
     u64 sec_total = (current > 0) ? (sec_elapsed * total) / current : 0;
@@ -1440,7 +1452,7 @@ bool ShowProgress(u64 current, u64 total, const char* opstr)
 
     last_prog_width = prog_width;
 
-    return !CheckButton(BUTTON_B);
+    return !ShowProgressCancelCheck(last_msec_elapsed);
 }
 
 int ShowBrightnessConfig(int set_brightness)
