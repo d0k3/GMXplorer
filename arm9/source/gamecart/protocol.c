@@ -33,7 +33,7 @@
 u32 CartID = 0xFFFFFFFFu;
 u32 CartType = 0;
 
-static u32 A0_Response = 0xFFFFFFFFu;
+static u32 CartID2 = 0xFFFFFFFFu;
 static u32 rand1 = 0;
 static u32 rand2 = 0;
 
@@ -85,6 +85,11 @@ u32 Cart_GetID(void)
     return CartID;
 }
 
+u32 Cart_GetID2(void)
+{
+    return CartID2;
+}
+
 void Cart_Init(void)
 {
     ResetCardSlot(); //Seems to reset the cart slot?
@@ -95,8 +100,8 @@ void Cart_Init(void)
 
     // 3ds
     if (CartID & 0x10000000) {
-        u32 unknowna0_cmd[2] = { 0xA0000000, 0x00000000 };
-        NTR_SendCommand(unknowna0_cmd, 0x4, 0, &A0_Response);
+        u32 getid2_cmd[2] = { 0xA0000000, 0x00000000 };
+        NTR_SendCommand(getid2_cmd, 0x4, 0, &CartID2);
 
         NTR_CmdEnter16ByteMode();
         SwitchToCTRCARD();
@@ -120,7 +125,7 @@ static u8 card_aes(u32 *out, u32 *buff, size_t size) { // note size param ignore
 
     //const u8 is_dev_unit = *(vu8*)0x10010010;
     //if(is_dev_unit) //Dev unit
-    const u8 is_dev_cart = (A0_Response&3)==3;
+    const u8 is_dev_cart = (CartID2&3)==3;
     if(is_dev_cart) //Dev unit
     {
         AES_SetKeyControl(0x11);
@@ -180,7 +185,7 @@ void Cart_Secure_Init(u32 *buf, u32 *out)
 
     ARM_WaitCycles(0xF0000 * 8);
 
-    CTR_SetSecKey(A0_Response);
+    CTR_SetSecKey(CartID2);
     CTR_SetSecSeed(out, true);
 
     rand1 = 0x42434445;//*((vu32*)0x10011000);
@@ -200,7 +205,7 @@ void Cart_Secure_Init(u32 *buf, u32 *out)
     const u32 A3_cmd[4] = { 0xA3000000, 0x00000000, rand1, rand2 };
     CTR_SendCommand(A3_cmd, 4, 1, 0x701002C, &test2);
 
-    if(test==CartID && test2==A0_Response)
+    if(test==CartID && test2==CartID2)
     {
         const u32 C5_cmd[4] = { 0xC5000000, 0x00000000, rand1, rand2 };
         CTR_SendCommand(C5_cmd, 0, 1, 0x100002C, NULL);

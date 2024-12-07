@@ -22,6 +22,7 @@ typedef struct {
     u8  unused[0x4000 + 0x8000 - PRIV_HDR_SIZE]; // 0xFF
     u32 cart_type;
     u32 cart_id;
+    u32 cart_id2;
     u64 cart_size;
     u64 data_size;
     u32 save_size;
@@ -37,6 +38,7 @@ typedef struct {
     u8 modcrypt_area[0x4000];
     u32 cart_type;
     u32 cart_id;
+    u32 cart_id2; // meaningless on TWL
     u64 cart_size;
     u64 data_size;
     u32 save_size;
@@ -190,6 +192,7 @@ u32 InitCartRead(CartData* cdata) {
         // init, NCCH header
         static u32 sec_keys[4];
         u8* ncch_header = cdata->header + 0x1000;
+        cdata->cart_id2 = Cart_GetID2();
         CTR_CmdReadHeader(ncch_header);
         Cart_Secure_Init((u32*) (void*) ncch_header, sec_keys);
 
@@ -214,7 +217,7 @@ u32 InitCartRead(CartData* cdata) {
         u8* priv_header = cdata->header + 0x4000;
         CTR_CmdReadUniqueID(priv_header);
         memcpy(priv_header + 0x40, &(cdata->cart_id), 4);
-        memset(priv_header + 0x44, 0x00, 4);
+        memcpy(priv_header + 0x44, &(cdata->cart_id2), 4);
         memset(priv_header + 0x48, 0xFF, 8);
 
         // save data

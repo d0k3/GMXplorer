@@ -23,6 +23,7 @@ typedef struct {
     u8  storage[0x8000]; // encrypted secure area + modcrypt area / unused
     u32 cart_type;
     u32 cart_id;
+    u32 cart_id2; // crypto type, some special dev stuff, normally all-0 for retail
     u64 cart_size;
     u64 data_size;
     u32 save_size;
