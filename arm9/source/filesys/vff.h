@@ -8,6 +8,7 @@
 
 #define fvx_tell(fp) ((fp)->fptr)
 #define fvx_size(fp) ((fp)->obj.objsize)
+#define fvx_eof(fp) (fvx_tell(fp) == fvx_size(fp))
 
 #define FN_ANY      0x00
 #define FN_HIGHEST  0x01

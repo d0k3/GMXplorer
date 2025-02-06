@@ -1,3 +1,4 @@
+export OBJDUMP	:=	arm-none-eabi-objdump
 
 dirname   = $(shell dirname $(1))
 
@@ -65,6 +66,10 @@ endif
 
 ifdef SD_TIMEOUT
     CFLAGS += -DSD_TIMEOUT=$(SD_TIMEOUT)
+endif
+
+ifeq ($(NO_LUA),1)
+    CFLAGS += -DNO_LUA
 endif
 
 ifdef N_PANES

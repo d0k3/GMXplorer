@@ -17,10 +17,10 @@ export COMMON_DIR := ../common
 
 # Definitions for initial RAM disk
 VRAM_TAR    := $(OUTDIR)/vram0.tar
-VRAM_DATA   := data
+VRAM_DATA   := data/*
 VRAM_FLAGS  := --make-new --path-limit 99
 ifeq ($(NTRBOOT),1)
-	VRAM_SCRIPTS := resources/gm9/scripts
+	VRAM_SCRIPTS := resources/gm9/scripts/*
 endif
 
 # Definitions for translation files
@@ -52,7 +52,7 @@ export CFLAGS  := -DDBUILTS="\"$(DBUILTS)\"" -DDBUILTL="\"$(DBUILTL)\"" -DVERSIO
                   -fomit-frame-pointer -ffast-math -std=gnu11 -MMD -MP \
                   -Wno-unused-function -Wno-format-truncation -Wno-format-nonliteral $(INCLUDE) -ffunction-sections -fdata-sections
 export LDFLAGS := -Tlink.ld -nostartfiles -Wl,--gc-sections,-z,max-page-size=4096
-ELF := arm9/arm9.elf arm11/arm11.elf
+ELF := arm9/arm9_code.elf arm9/arm9_data.elf arm11/arm11.elf
 
 .PHONY: all firm $(VRAM_TAR) elf release clean
 all: firm
@@ -93,7 +93,7 @@ release: clean unmarked_readme
 $(VRAM_TAR): $(SPLASH) $(OVERRIDE_FONT) $(VRAM_DATA) $(VRAM_SCRIPTS)
 	@mkdir -p "$(@D)"
 	@echo "Creating $@"
-	@$(PY3) utils/add2tar.py $(VRAM_FLAGS) $(VRAM_TAR) $(shell find $^ -type f)
+	$(PY3) utils/add2tar.py $(VRAM_FLAGS) $(VRAM_TAR) $(shell ls -d -1 $^)
 
 $(LANGUAGE_INL): $(SOURCE_JSON)
 	@echo "Creating $@"
@@ -104,9 +104,13 @@ $(TRF_FOLDER)/%.trf: $(JSON_FOLDER)/%.json
 
 %.elf: .FORCE
 	@echo "Building $@"
-	@$(MAKE) --no-print-directory -C $(@D)
+	@$(MAKE) --no-print-directory -C $(@D) $(@F)
 
-arm9/arm9.elf: $(VRAM_TAR) $(LANGUAGE_INL)
+# Indicate a few explicit dependencies:
+# The ARM9 data section depends on the VRAM drive
+arm9/arm9_data.elf: $(VRAM_TAR) $(LANGUAGE_INL)
+# And the code section depends on the data section being built already
+arm9/arm9_code.elf: arm9/arm9_data.elf
 
 firm: $(ELF) $(TRF_FILES)
 	@mkdir -p $(call dirname,"$(FIRM)") $(call dirname,"$(FIRMD)")
@@ -114,9 +118,9 @@ firm: $(ELF) $(TRF_FILES)
 	@echo "[VERSION] $(VERSION)"
 	@echo "[BUILD] $(DBUILTL)"
 	@echo "[FIRM] $(FIRM)"
-	@$(PY3) -m firmtool build $(FIRM) $(FTFLAGS) -g -D $(ELF) -C NDMA XDMA
+	@$(PY3) -m firmtool build $(FIRM) $(FTFLAGS) -g -D $(ELF) -C NDMA NDMA XDMA
 	@echo "[FIRM] $(FIRMD)"
-	@$(PY3) -m firmtool build $(FIRMD) $(FTDFLAGS) -g -D $(ELF) -C NDMA XDMA
+	@$(PY3) -m firmtool build $(FIRMD) $(FTDFLAGS) -g -D $(ELF) -C NDMA NDMA XDMA
 
 vram0: $(VRAM_TAR) .FORCE # legacy target name
 

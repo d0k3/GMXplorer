@@ -11,8 +11,10 @@
 
 // known file names inside VRAM0 TAR
 #define VRAM0_AUTORUN_GM9      "autorun.gm9"
+#define VRAM0_AUTORUN_LUA      "autorun.lua"
 #define VRAM0_FONT             DEFAULT_FONT
 #define VRAM0_SCRIPTS          "scripts"
+#define VRAM0_LUASCRIPTS       "luascripts"
 #define VRAM0_README_MD        "README_internal.md"
 #define VRAM0_SPLASH_PNG       FLAVOR "_splash.png"
 #define VRAM0_EASTER_BIN       "easter.bin"

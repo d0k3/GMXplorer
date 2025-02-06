@@ -182,6 +182,7 @@
 	"BUILD_X": "Build %s",
 	"NCCHINFO_OPTIONS": "NCCHinfo options...",
 	"EXECUTE_GM9_SCRIPT": "Execute GM9 script",
+	"EXECUTE_LUA_SCRIPT": "Execute Lua script",
 	"FONT_OPTIONS": "Font options...",
 	"LANGUAGE_OPTIONS": "Language options...",
 	"VIEW_PNG_FILE": "View PNG file",
@@ -405,6 +406,7 @@
 	"RESUME_BOOTLOADER": "Resume bootloader",
 	"SELECT_PAYLOAD": "Select payload...",
 	"SELECT_SCRIPT": "Select script...",
+	"SELECT_LUA_SCRIPT": "Select Lua script...",
 	"POWEROFF_SYSTEM": "Poweroff system",
 	"REBOOT_SYSTEM": "Reboot system",
 	"FLAVOR_BOOTLOADER_SELECT_OPTION": "%s bootloader menu.\nSelect action:",
@@ -459,6 +461,7 @@
 	"BRICK_MY_3DS": "Brick my 3DS",
 	"LANGUAGE": "Language...",
 	"SCRIPTS": "Scripts...",
+	"LUA_SCRIPTS": "Lua scripts...",
 	"PAYLOADS": "Payloads...",
 	"MORE": "More...",
 	"BRACKET_MORE": "[more...]",
@@ -471,8 +474,10 @@
 	"TITLE_MANAGER_MENU_SELECT_TITLES_SOURCE": "Title manager menu.\nSelect titles source:",
 	"LANGUAGES_DIRECTORY_NOT_FOUND": "Languages directory not found.\n(default path: 0:/gm9/%s)",
 	"SCRIPTS_DIRECTORY_NOT_FOUND": "Scripts directory not found.\n(default path: 0:/gm9/%s)",
+	"LUA_SCRIPTS_DIRECTORY_NOT_FOUND": "Lua scripts directory not found.\n(default path: 0:/gm9/%s)",
 	"HOME_LANGUAGE_MENU_SELECT_LANGUAGE": "HOME language... menu.\nSelect language:",
 	"HOME_SCRIPTS_MENU_SELECT_SCRIPT": "HOME scripts... menu.\nSelect script:",
+	"HOME_LUA_SCRIPTS_MENU_SELECT_SCRIPT": "HOME Lua scripts... menu.\nSelect script:",
 	"PAYLOADS_DIRECTORY_NOT_FOUND": "Payloads directory not found.\n(default path: 0:/gm9/%s)",
 	"HOME_PAYLOADS_MENU_SELECT_PAYLOAD": "HOME payloads... menu.\nSelect payload:",
 	"UNEXPECTED_SD_CARD_REMOVAL_TO_PREVENT_DATA_LOSS_UNMOUNT_BEFORE_EJECT": "!Unexpected SD card removal!\n \nTo prevent data loss, unmount\nbefore ejecting the SD card.",
@@ -805,5 +810,6 @@
 	"SYSINFO_SD_CID": "SD CID: %s\r\n",
 	"SYSINFO_SYSTEM_ID0": "System ID0: %s\r\n",
 	"SYSINFO_SYSTEM_ID1": "System ID1: %s\r\n",
-	"SORTING_TICKETS_PLEASE_WAIT": "Sorting tickets, please wait ..."
+	"SORTING_TICKETS_PLEASE_WAIT": "Sorting tickets, please wait ...",
+	"LUA_NOT_INCLUDED": "This build of GodMode9 was\ncompiled without Lua support."
 }

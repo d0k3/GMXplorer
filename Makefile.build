@@ -1,4 +1,6 @@
 
+LIBS ?= 
+
 OBJECTS := $(patsubst $(SOURCE)/%.s, $(BUILD)/%.o, \
           $(patsubst $(SOURCE)/%.c, $(BUILD)/%.o, \
           $(call rwildcard, $(SOURCE), *.s *.c)))
@@ -11,11 +13,12 @@ all: $(TARGET).elf
 
 .PHONY: clean
 clean:
-	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).map
+	@rm -rf $(BUILD) $(TARGET).elf $(TARGET).dis $(TARGET).map
 
 $(TARGET).elf: $(OBJECTS) $(OBJECTS_COMMON)
 	@mkdir -p "$(@D)"
-	@$(CC) $(LDFLAGS) $^ -o $@
+	@$(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+	@$(OBJDUMP) -S $@ > $@.dis
 
 $(BUILD)/%.cmn.o: $(COMMON_DIR)/%.c
 	@mkdir -p "$(@D)"

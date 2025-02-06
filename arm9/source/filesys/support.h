@@ -5,6 +5,7 @@
 // scripts / payloads dir names
 #define LANGUAGES_DIR   "languages"
 #define SCRIPTS_DIR     "scripts"
+#define LUASCRIPTS_DIR  "luascripts"
 #define PAYLOADS_DIR    "payloads"
 
 bool CheckSupportFile(const char* fname);

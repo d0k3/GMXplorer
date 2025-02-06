@@ -127,7 +127,7 @@ typedef enum {
     CMD_ID_NEXTEMU,
     CMD_ID_REBOOT,
     CMD_ID_POWEROFF,
-    CMD_ID_BKPT
+    CMD_ID_BKPT,
 } cmd_id;
 
 typedef struct {

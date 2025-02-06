@@ -5,6 +5,7 @@
 *.obj
 *.elf
 *.map
+*.dis
 
 # Precompiled Headers
 *.gch
@@ -35,6 +36,7 @@
 
 # OS leftovers
 desktop.ini
+.DS_Store
 
 # Sublime files
 *.sublime-*
